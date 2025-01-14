@@ -1,0 +1,309 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>RavyCraft Aventura</title>
+    <style>
+        body { margin: 0; overflow: hidden; touch-action: none; }
+        canvas { width: 100%; height: 100% }
+        #joystick {
+            position: fixed;
+            left: 20px;
+            bottom: 20px;
+            width: 120px;
+            height: 120px;
+            background: rgba(255,255,255,0.2);
+            border-radius: 50%;
+            touch-action: none;
+        }
+        #joystickKnob {
+            position: absolute;
+            left: 50%;
+            top: 50%;
+            width: 40px;
+            height: 40px;
+            background: rgba(255,255,255,0.5);
+            border-radius: 50%;
+            transform: translate(-50%, -50%);
+            pointer-events: none;
+        }
+        #areaVisao {
+            position: fixed;
+            right: 0;
+            top: 0;
+            width: 70%;
+            height: 100%;
+            touch-action: none;
+        }
+    </style>
+</head>
+<body>
+    <div id="areaVisao"></div>
+    <div id="joystick">
+        <div id="joystickKnob"></div>
+    </div>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+    <script>
+        const TAMANHO_BLOCO = 16;
+        const DISTANCIA_RENDERIZACAO = 3;
+        const DISTANCIA_CULLING = 48;
+        const CULLING_FRUSTUM = true;
+
+        const cena = new THREE.Scene();
+        const camera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 0.1, DISTANCIA_CULLING);
+        const renderizador = new THREE.WebGLRenderer({ antialias: false });
+        renderizador.setSize(window.innerWidth, window.innerHeight);
+        renderizador.setPixelRatio(window.devicePixelRatio);
+        document.body.appendChild(renderizador.domElement);
+
+        cena.background = new THREE.Color(0x87CEEB);
+        const corNebulosa = new THREE.Color(0x87CEEB);
+        cena.fog = new THREE.Fog(corNebulosa, 1, DISTANCIA_CULLING);
+
+        const geometriaBloco = new THREE.BoxGeometry(1, 1, 1);
+        const materiaisBloco = {
+            grama: new THREE.MeshLambertMaterial({ color: 0x55AA55 }),
+            terra: new THREE.MeshLambertMaterial({ color: 0x8B4513 }),
+            pedra: new THREE.MeshLambertMaterial({ color: 0x888888 })
+        };
+
+        class GerenciadorChunks {
+            constructor() {
+                this.chunks = new Map();
+                this.chunksVisiveis = new Set();
+                this.frustum = new THREE.Frustum();
+                this.matriz = new THREE.Matrix4();
+            }
+
+            obterChaveChunk(x, z) {
+                return `${x},${z}`;
+            }
+
+            estaChunkVisivel(chunk) {
+                if (!CULLING_FRUSTUM) return true;
+                this.frustum.setFromProjectionMatrix(
+                    this.matriz.multiplyMatrices(camera.projectionMatrix, camera.matrixWorldInverse)
+                );
+                return this.frustum.intersectsBox(chunk.boundingBox);
+            }
+
+            gerarChunk(chunkX, chunkZ) {
+                const chave = this.obterChaveChunk(chunkX, chunkZ);
+                if (this.chunks.has(chave)) return this.chunks.get(chave);
+
+                const chunk = new THREE.Group();
+                chunk.boundingBox = new THREE.Box3();
+                
+                for (let x = 0; x < TAMANHO_BLOCO; x++) {
+                    for (let z = 0; z < TAMANHO_BLOCO; z++) {
+                        const mundoX = chunkX * TAMANHO_BLOCO + x;
+                        const mundoZ = chunkZ * TAMANHO_BLOCO + z;
+                        
+                        const altura = Math.floor(
+                            (Math.sin(mundoX * 0.1) + Math.cos(mundoZ * 0.1)) * 3 + 4
+                        );
+
+                        for (let y = 0; y < altura; y++) {
+                            let material;
+                            if (y === altura - 1) material = materiaisBloco.grama;
+                            else if (y > altura - 3) material = materiaisBloco.terra;
+                            else material = materiaisBloco.pedra;
+
+                            const bloco = new THREE.Mesh(geometriaBloco, material);
+                            bloco.position.set(x, y, z);
+                            
+                            if (y < altura - 1) {
+                                bloco.visible = false;
+                            }
+                            
+                            chunk.add(bloco);
+                        }
+                    }
+                }
+
+                chunk.position.set(chunkX * TAMANHO_BLOCO, 0, chunkZ * TAMANHO_BLOCO);
+                chunk.boundingBox.setFromObject(chunk);
+                
+                this.chunks.set(chave, chunk);
+                return chunk;
+            }
+
+            atualizarChunksVisiveis() {
+                const jogadorChunkX = Math.floor(camera.position.x / TAMANHO_BLOCO);
+                const jogadorChunkZ = Math.floor(camera.position.z / TAMANHO_BLOCO);
+
+                for (const chunk of this.chunksVisiveis) {
+                    if (!this.estaChunkVisivel(chunk)) {
+                        cena.remove(chunk);
+                        this.chunksVisiveis.delete(chunk);
+                    }
+                }
+
+                for (let x = -DISTANCIA_RENDERIZACAO; x <= DISTANCIA_RENDERIZACAO; x++) {
+                    for (let z = -DISTANCIA_RENDERIZACAO; z <= DISTANCIA_RENDERIZACAO; z++) {
+                        const chunkX = jogadorChunkX + x;
+                        const chunkZ = jogadorChunkZ + z;
+                        const chunk = this.gerarChunk(chunkX, chunkZ);
+
+                        if (this.estaChunkVisivel(chunk) && !this.chunksVisiveis.has(chunk)) {
+                            cena.add(chunk);
+                            this.chunksVisiveis.add(chunk);
+                        }
+                    }
+                }
+            }
+        }
+
+        const gerenciadorChunks = new GerenciadorChunks();
+
+        class Controles {
+            constructor() {
+                this.estadoMovimento = {
+                    frente: 0,
+                    direita: 0
+                };
+                
+                this.estadoVisao = {
+                    x: 0,
+                    y: 0
+                };
+
+                this.joystick = document.getElementById('joystick');
+                this.knobJoystick = document.getElementById('joystickKnob');
+                this.areaVisao = document.getElementById('areaVisao');
+
+                this.velocidadeMovimento = 0.15;
+                this.sensibilidadeVisao = 2.5;
+                this.pitchMaximo = Math.PI / 2.2;
+                
+                this.configurarControles();
+            }
+
+            configurarControles() {
+                this.joystick.addEventListener('touchstart', (e) => {
+                    e.preventDefault();
+                    this.iniciarJoystick(e.touches[0]);
+                });
+
+                this.joystick.addEventListener('touchmove', (e) => {
+                    e.preventDefault();
+                    this.moverJoystick(e.touches[0]);
+                });
+
+                this.joystick.addEventListener('touchend', () => {
+                    this.reiniciarJoystick();
+                });
+
+                this.areaVisao.addEventListener('touchstart', (e) => {
+                    e.preventDefault();
+                    this.iniciarVisao(e.touches[0]);
+                });
+
+                this.areaVisao.addEventListener('touchmove', (e) => {
+                    e.preventDefault();
+                    this.moverVisao(e.touches[0]);
+                });
+            }
+
+            iniciarJoystick(touch) {
+                const rect = this.joystick.getBoundingClientRect();
+                this.centroJoystick = {
+                    x: rect.left + rect.width / 2,
+                    y: rect.top + rect.height / 2
+                };
+                this.moverJoystick(touch);
+            }
+
+            moverJoystick(touch) {
+                const deltaX = touch.clientX - this.centroJoystick.x;
+                const deltaY = touch.clientY - this.centroJoystick.y;
+                const distancia = Math.min(50, Math.sqrt(deltaX * deltaX + deltaY * deltaY));
+                const angulo = Math.atan2(deltaY, deltaX);
+
+                const knobX = Math.cos(angulo) * distancia;
+                const knobY = Math.sin(angulo) * distancia;
+
+                this.knobJoystick.style.transform = `translate(${knobX}px, ${knobY}px)`;
+
+                this.estadoMovimento.direita = (knobX / 50);
+                this.estadoMovimento.frente = -(knobY / 50);
+            }
+
+            reiniciarJoystick() {
+                this.knobJoystick.style.transform = 'translate(0px, 0px)';
+                this.estadoMovimento.frente = 0;
+                this.estadoMovimento.direita = 0;
+            }
+
+            iniciarVisao(touch) {
+                this.ultimoTouchX = touch.clientX;
+                this.ultimoTouchY = touch.clientY;
+            }
+
+            moverVisao(touch) {
+                const deltaX = touch.clientX - this.ultimoTouchX;
+                const deltaY = touch.clientY - this.ultimoTouchY;
+
+                this.estadoVisao.x -= deltaX * 0.01;
+                this.estadoVisao.y -= deltaY * 0.01;
+
+                this.estadoVisao.y = Math.max(-this.pitchMaximo, Math.min(this.pitchMaximo, this.estadoVisao.y));
+
+                this.ultimoTouchX = touch.clientX;
+                this.ultimoTouchY = touch.clientY;
+            }
+
+            atualizar() {
+                camera.rotation.y = this.estadoVisao.x;
+                camera.rotation.x = this.estadoVisao.y;
+
+                const frente = new THREE.Vector3(0, 0, -1);
+                const direita = new THREE.Vector3(1, 0, 0);
+                frente.applyQuaternion(camera.quaternion);
+                direita.applyQuaternion(camera.quaternion);
+
+                frente.y = 0;
+                direita.y = 0;
+                frente.normalize();
+                direita.normalize();
+
+                camera.position.addScaledVector(frente, this.estadoMovimento.frente * this.velocidadeMovimento);
+                camera.position.addScaledVector(direita, this.estadoMovimento.direita * this.velocidadeMovimento);
+            }
+        }
+
+        const controles = new Controles();
+
+        const luz = new THREE.DirectionalLight(0xffffff, 1);
+        luz.position.set(1, 1, 1);
+        cena.add(luz);
+        cena.add(new THREE.AmbientLight(0x404040));
+
+        camera.position.set(0, 10, 0);
+
+        let ultimoTempo = 0;
+        const FPSDesejado = 60;
+        const intervaloQuadro = 1000 / FPSDesejado;
+
+        function animar(tempoAtual) {
+            requestAnimationFrame(animar);
+
+            const deltaTempo = tempoAtual - ultimoTempo;
+            if (deltaTempo < intervaloQuadro) return;
+
+            ultimoTempo = tempoAtual - (deltaTempo % intervaloQuadro);
+
+            controles.atualizar();
+            gerenciadorChunks.atualizarChunksVisiveis();
+            renderizador.render(cena, camera);
+        }
+
+        window.addEventListener('resize', () => {
+            camera.aspect = window.innerWidth / window.innerHeight;
+            camera.updateProjectionMatrix();
+            renderizador.setSize(window.innerWidth, window.innerHeight);
+        });
+
+        animar(0);
+    </script>
+</body>
+</html>
