@@ -1,0 +1,1010 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Basquete 3D</title>
+    <style>
+        body { margin: 0; overflow: hidden; touch-action: none; }
+        canvas { width: 100%; height: 100% }
+        #pontuacao {
+            position: fixed;
+            top: 20px;
+            left: 20px;
+            color: white;
+            font-family: Arial;
+            font-size: 24px;
+            text-shadow: 2px 2px 4px rgba(0,0,0,0.5);
+        }
+        #nivel {
+            position: fixed;
+            top: 50px;
+            left: 20px;
+            color: white;
+            font-family: Arial;
+            font-size: 20px;
+            text-shadow: 2px 2px 4px rgba(0,0,0,0.5);
+        }
+        #instrucoes {
+            position: fixed;
+            bottom: 20px;
+            left: 50%;
+            transform: translateX(-50%);
+            color: white;
+            font-family: Arial;
+            font-size: 16px;
+            text-align: center;
+            text-shadow: 2px 2px 4px rgba(0,0,0,0.5);
+        }
+        #forcaArremesso {
+            position: fixed;
+            bottom: 50px;
+            left: 50%;
+            transform: translateX(-50%);
+            width: 200px;
+            height: 20px;
+            background: rgba(0,0,0,0.3);
+            border-radius: 10px;
+            display: none;
+            overflow: hidden;
+        }
+        #barraForca {
+            width: 0%;
+            height: 100%;
+            background: linear-gradient(90deg, 
+                #4CAF50 0%, 
+                #4CAF50 30%, 
+                #FFC107 30%, 
+                #FFC107 60%, 
+                #F44336 60%, 
+                #F44336 100%
+            );
+            border-radius: 10px;
+            transition: width 0.1s;
+        }
+        #joystick, #joystickForca {
+            position: fixed;
+            width: 120px;
+            height: 120px;
+            background: rgba(255,255,255,0.2);
+            border-radius: 50%;
+            display: none;
+            touch-action: none;
+        }
+        #joystick {
+            left: 20px;
+            bottom: 20px;
+        }
+        #joystickForca {
+            right: 20px;
+            bottom: 20px;
+        }
+        #joystickKnob, #joystickForcaKnob {
+            position: absolute;
+            left: 50%;
+            top: 50%;
+            width: 40px;
+            height: 40px;
+            background: rgba(94, 18, 18, 0.493);
+            border-radius: 50%;
+            transform: translate(-50%, -50%);
+            pointer-events: none;
+        }
+    </style>
+</head>
+<body>
+    <div id="pontuacao">Pontos: 0</div>
+    <div id="nivel">Nível: 1</div>
+    <div id="instrucoes">Pressione e segure para controlar a força | Mova o mouse para mirar</div>
+    <div id="forcaArremesso"><div id="barraForca"></div></div>
+    <div id="joystick"><div id="joystickKnob"></div></div>
+    <div id="joystickForca"><div id="joystickForcaKnob"></div></div>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+    <script>
+        let cena, camera, renderizador, bola, cesta, mao;
+        let pontos = 0;
+        let nivel = 1;
+        let acertosNoNivel = 0;
+        let bolaArremessada = false;
+        let velocidadeBola = new THREE.Vector3();
+        let posicaoInicial;
+        let ultimoTempo = 0;
+        let forcaAtual = 0;
+        let carregandoForca = false;
+        let isMobile = /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent);
+        let joystickAtivo = false;
+        let joystickPos = { x: 0, y: 0 };
+        let bolasArremessadas = [];
+        let linhaMira;
+        let pontosTrajetoria = [];
+        
+        // Configuração inicial
+        function init() {
+            // Cena
+            cena = new THREE.Scene();
+            cena.background = new THREE.Color(0x87CEEB);
+            
+            // Camera
+            camera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 0.1, 1000);
+            posicaoInicial = new THREE.Vector3(0, 1.7, 3);
+            camera.position.copy(posicaoInicial);
+            
+            // Renderizador
+            renderizador = new THREE.WebGLRenderer({ antialias: true });
+            renderizador.setSize(window.innerWidth, window.innerHeight);
+            renderizador.shadowMap.enabled = true;
+            document.body.appendChild(renderizador.domElement);
+            
+            // Iluminação
+            const luzAmbiente = new THREE.AmbientLight(0xffffff, 0.6);
+            cena.add(luzAmbiente);
+            
+            const luzDirecional = new THREE.DirectionalLight(0xffffff, 0.8);
+            luzDirecional.position.set(5, 5, 5);
+            luzDirecional.castShadow = true;
+            cena.add(luzDirecional);
+            
+            // Quadra
+            criarQuadra();
+            
+            // Cesta de basquete
+            criarCesta();
+            
+            // Bola
+            criarBola();
+            
+            // Mão
+            criarMao();
+            
+            // Configurar controles baseados no dispositivo
+            if (isMobile) {
+                document.getElementById('joystick').style.display = 'block';
+                document.getElementById('joystickForca').style.display = 'block';
+                document.getElementById('instrucoes').textContent = 'Toque e segure para arremessar | Use o joystick para mirar';
+                configurarControlesMobile();
+            } else {
+                document.getElementById('forcaArremesso').style.display = 'block';
+                configurarControlesPC();
+            }
+            
+            // Criar linha de mira
+            const materialLinhaMira = new THREE.LineBasicMaterial({ 
+                color: 0xff0000,
+                transparent: true,
+                opacity: 0.8,
+                linewidth: 3
+            });
+            const geometriaLinhaMira = new THREE.BufferGeometry();
+            linhaMira = new THREE.Line(geometriaLinhaMira, materialLinhaMira);
+            cena.add(linhaMira);
+            
+            // Adicionar eventos para arremesso perfeito
+            document.addEventListener('keydown', (e) => {
+                if (e.key === 'o' || e.key === 'O') {
+                    arremessarPerfeito();
+                }
+            });
+            
+            document.getElementById('pontuacao').addEventListener('click', () => {
+                if (isMobile) {
+                    arremessarPerfeito();
+                }
+            });
+            
+            window.addEventListener('resize', onWindowResize);
+        }
+        
+        function criarQuadra() {
+            // Chão da quadra
+            const geometriaQuadra = new THREE.PlaneGeometry(50, 50);
+            const materialQuadra = new THREE.MeshStandardMaterial({ 
+                color: 0x8B2323, // Tom vermelho escuro
+                roughness: 0.9
+            });
+            const quadra = new THREE.Mesh(geometriaQuadra, materialQuadra);
+            quadra.rotation.x = -Math.PI / 2;
+            quadra.receiveShadow = true;
+            cena.add(quadra);
+            
+            // Linhas da quadra
+            const linhas = new THREE.Group();
+            
+            // Garrafão com borda branca sólida
+            const geometriaGarrafaoExterno = new THREE.PlaneGeometry(5, 6);
+            const garrafaoExterno = new THREE.Mesh(
+                geometriaGarrafaoExterno,
+                new THREE.MeshBasicMaterial({ color: 0xffffff })
+            );
+            garrafaoExterno.rotation.x = -Math.PI / 2;
+            garrafaoExterno.position.set(0, 0.01, -11.5);
+            
+            const geometriaGarrafaoInterno = new THREE.PlaneGeometry(4.8, 5.8);
+            const garrafaoInterno = new THREE.Mesh(
+                geometriaGarrafaoInterno,
+                new THREE.MeshBasicMaterial({ color: 0x8B2323 })
+            );
+            garrafaoInterno.rotation.x = -Math.PI / 2;
+            garrafaoInterno.position.set(0, 0.02, 0);
+            garrafaoExterno.add(garrafaoInterno);
+            
+            linhas.add(garrafaoExterno);
+            
+            // Linha guia do jogador até a cesta
+            const geometriaLinhaGuia = new THREE.PlaneGeometry(0.1, Math.abs(posicaoInicial.z + 5));
+            const materialLinhaGuia = new THREE.MeshBasicMaterial({ 
+                color: 0xffffff,
+                transparent: true,
+                opacity: 0.3
+            });
+            const linhaGuia = new THREE.Mesh(geometriaLinhaGuia, materialLinhaGuia);
+            linhaGuia.rotation.x = -Math.PI / 2;
+            linhaGuia.position.set(0, 0.01, (posicaoInicial.z - 5) / 2);
+            cena.add(linhaGuia);
+            
+            // Parede de fundo
+            const geometriaParede = new THREE.BoxGeometry(20, 10, 0.5);
+            const materialParede = new THREE.MeshStandardMaterial({ 
+                color: 0x666666,
+                roughness: 0.7
+            });
+            const parede = new THREE.Mesh(geometriaParede, materialParede);
+            const escalaParede = Math.max(0.4, 1 - ((nivel - 1) * 0.1));
+            parede.scale.set(escalaParede, escalaParede, 1);
+            parede.position.set(0, 5 * escalaParede, -8 * escalaParede);
+            parede.receiveShadow = true;
+            cena.add(parede);
+            
+            cena.add(linhas);
+        }
+        
+        function criarCesta() {
+            const grupoCesta = new THREE.Group();
+            
+            // Adicionar escala baseada no nível (para até nível 4)
+            const escala = nivel <= 4 ? Math.max(0.4, 1 - ((nivel - 1) * 0.1)) : 0.7;
+            grupoCesta.scale.set(escala, escala, escala);
+            
+            // Suporte traseiro
+            const geometriaSuporteVertical = new THREE.BoxGeometry(0.3, 4, 0.3);
+            const materialSuporte = new THREE.MeshStandardMaterial({ color: 0x444444 });
+            const suporteVertical = new THREE.Mesh(geometriaSuporteVertical, materialSuporte);
+            suporteVertical.position.set(0, 2, -0.4);
+            grupoCesta.add(suporteVertical);
+            
+            // Tabela
+            const geometriaTabela = new THREE.BoxGeometry(3, 2, 0.1);
+            const materialTabela = new THREE.MeshStandardMaterial({ color: 0xffffff });
+            const tabela = new THREE.Mesh(geometriaTabela, materialTabela);
+            tabela.position.y = 3;
+            grupoCesta.add(tabela);
+            
+            // Contorno laranja na tabela
+            const geometriaContornoExterno = new THREE.BoxGeometry(0.7, 0.6, 0.11);
+            const materialContorno = new THREE.MeshStandardMaterial({ color: 0xff8c00 });
+            const contornoExterno = new THREE.Mesh(geometriaContornoExterno, materialContorno);
+            contornoExterno.position.set(0, 2.7, 0.05);
+            
+            const geometriaContornoInterno = new THREE.BoxGeometry(0.5, 0.4, 0.12);
+            const contornoInterno = new THREE.Mesh(geometriaContornoInterno, materialTabela);
+            contornoInterno.position.set(0, 0, 0);
+            contornoExterno.add(contornoInterno);
+            
+            grupoCesta.add(contornoExterno);
+            
+            // Aro
+            const geometriaAro = new THREE.TorusGeometry(0.45, 0.04, 16, 32);
+            const materialAro = new THREE.MeshStandardMaterial({ color: 0xff4444 });
+            const aro = new THREE.Mesh(geometriaAro, materialAro);
+            aro.rotation.x = Math.PI / 2;
+            aro.position.z = 0.5;
+            aro.position.y = 2.7;
+            grupoCesta.add(aro);
+            
+            // Rede (mais densa)
+            const materialRede = new THREE.MeshStandardMaterial({ 
+                color: 0xffffff,
+                transparent: true,
+                opacity: 0.5
+            });
+            
+            // Fios verticais
+            for (let i = 0; i < 16; i++) {
+                const geometriaFioRede = new THREE.CylinderGeometry(0.01, 0.01, 0.6);
+                const fioRede = new THREE.Mesh(geometriaFioRede, materialRede);
+                fioRede.position.y = 2.4;
+                fioRede.position.z = 0.5;
+                fioRede.rotation.x = Math.PI * 0.1;
+                fioRede.rotation.y = (Math.PI * 2 / 16) * i;
+                grupoCesta.add(fioRede);
+            }
+            
+            // Fios horizontais
+            for (let i = 0; i < 4; i++) {
+                const geometriaAnel = new THREE.TorusGeometry(0.45 - (i * 0.1), 0.005, 16, 32);
+                const anel = new THREE.Mesh(geometriaAnel, materialRede);
+                anel.rotation.x = Math.PI / 2;
+                anel.position.z = 0.5;
+                anel.position.y = 2.7 - ((i + 1) * 0.15);
+                grupoCesta.add(anel);
+            }
+            
+            grupoCesta.position.set(0, 0, -5);
+            cesta = grupoCesta;
+            cena.add(cesta);
+        }
+        
+        function criarBola() {
+            // Textura da bola
+            const geometriaBola = new THREE.SphereGeometry(0.12, 32, 32);
+            const materialBola = new THREE.MeshStandardMaterial({ 
+                color: 0xf4a460,
+                roughness: 0.8,
+                metalness: 0.1
+            });
+            
+            // Adicionar linhas à bola
+            const geometriaLinhas = new THREE.TorusGeometry(0.12, 0.005, 16, 32);
+            const materialLinhas = new THREE.MeshBasicMaterial({ color: 0x000000 });
+            
+            bola = new THREE.Group();
+            const esferaBola = new THREE.Mesh(geometriaBola, materialBola);
+            bola.add(esferaBola);
+            
+            // Adicionar linhas
+            for (let i = 0; i < 3; i++) {
+                const linha = new THREE.Mesh(geometriaLinhas, materialLinhas);
+                linha.rotation.x = Math.PI / 2 * i;
+                bola.add(linha);
+            }
+            
+            resetarBola();
+            bola.castShadow = true;
+            cena.add(bola);
+        }
+        
+        function criarMao() {
+            const grupoMao = new THREE.Group();
+            
+            // Palma
+            const geometriaPalma = new THREE.BoxGeometry(0.08, 0.15, 0.04);
+            const materialMao = new THREE.MeshStandardMaterial({ color: 0xffdbac });
+            const palma = new THREE.Mesh(geometriaPalma, materialMao);
+            grupoMao.add(palma);
+            
+            // Dedos
+            const geometriaDedo = new THREE.BoxGeometry(0.02, 0.08, 0.02);
+            for (let i = 0; i < 4; i++) {
+                const dedo = new THREE.Mesh(geometriaDedo, materialMao);
+                dedo.position.x = -0.03 + (i * 0.02);
+                dedo.position.y = 0.1;
+                grupoMao.add(dedo);
+            }
+            
+            // Polegar
+            const polegar = new THREE.Mesh(geometriaDedo, materialMao);
+            polegar.position.x = -0.05;
+            polegar.position.y = 0.05;
+            polegar.rotation.z = Math.PI / 4;
+            grupoMao.add(polegar);
+            
+            mao = grupoMao;
+            atualizarPosicaoMao();
+            cena.add(mao);
+        }
+        
+        function configurarControlesPC() {
+            document.addEventListener('mousedown', iniciarCarregamentoForca);
+            document.addEventListener('mouseup', arremessarBola);
+            document.addEventListener('mousemove', onMouseMove);
+        }
+        
+        function configurarControlesMobile() {
+            const joystick = document.getElementById('joystick');
+            const joystickKnob = document.getElementById('joystickKnob');
+            const joystickForca = document.getElementById('joystickForca');
+            const joystickForcaKnob = document.getElementById('joystickForcaKnob');
+            
+            // Mostrar ambos os joysticks
+            joystick.style.display = 'block';
+            joystickForca.style.display = 'block';
+            
+            // Joystick de mira
+            joystick.addEventListener('touchstart', (e) => {
+                e.preventDefault();
+                joystickAtivo = true;
+                atualizarJoystick(e.touches[0]);
+            });
+            
+            joystick.addEventListener('touchmove', (e) => {
+                e.preventDefault();
+                if (joystickAtivo) {
+                    atualizarJoystick(e.touches[0]);
+                }
+            });
+            
+            joystick.addEventListener('touchend', () => {
+                joystickAtivo = false;
+                joystickPos = { x: 0, y: 0 };
+                joystickKnob.style.transform = 'translate(-50%, -50%)';
+            });
+            
+            // Joystick de força
+            let forcaAtiva = false;
+            
+            joystickForca.addEventListener('touchstart', (e) => {
+                e.preventDefault();
+                forcaAtiva = true;
+                carregandoForca = true;
+                forcaAtual = 0;
+            });
+            
+            joystickForca.addEventListener('touchmove', (e) => {
+                e.preventDefault();
+                if (forcaAtiva && !bolaArremessada) {
+                    const rect = joystickForca.getBoundingClientRect();
+                    const centerY = rect.top + rect.height / 2;
+                    const deltaY = centerY - e.touches[0].clientY;
+                    const maxDist = rect.height / 2;
+                    
+                    forcaAtual = Math.min(100, Math.max(0, (deltaY / maxDist) * 100));
+                    joystickForcaKnob.style.transform = 
+                        `translate(-50%, calc(-50% - ${(forcaAtual / 100) * maxDist}px))`;
+                }
+            });
+            
+            joystickForca.addEventListener('touchend', () => {
+                if (forcaAtiva && !bolaArremessada) {
+                    forcaAtiva = false;
+                    carregandoForca = false;
+                    joystickForcaKnob.style.transform = 'translate(-50%, -50%)';
+                    arremessarBola();
+                }
+            });
+            
+            // Deslizar para rotacionar a câmera
+            let touchStartX = 0;
+            let touchStartY = 0;
+            
+            document.addEventListener('touchstart', (e) => {
+                if (e.touches.length === 1 && 
+                    !elementoEhJoystick(e.touches[0].target)) {
+                    touchStartX = e.touches[0].clientX;
+                    touchStartY = e.touches[0].clientY;
+                }
+            });
+            
+            document.addEventListener('touchmove', (e) => {
+                if (e.touches.length === 1 && 
+                    !elementoEhJoystick(e.touches[0].target)) {
+                    const deltaX = e.touches[0].clientX - touchStartX;
+                    const deltaY = e.touches[0].clientY - touchStartY;
+                    
+                    camera.rotation.y -= deltaX * 0.01;
+                    camera.rotation.x = Math.max(-0.5, Math.min(0.5, camera.rotation.x - deltaY * 0.01));
+                    
+                    touchStartX = e.touches[0].clientX;
+                    touchStartY = e.touches[0].clientY;
+                }
+            });
+        }
+        
+        function elementoEhJoystick(elemento) {
+            return elemento.id === 'joystick' || 
+                   elemento.id === 'joystickForca' ||
+                   elemento.parentElement.id === 'joystick' ||
+                   elemento.parentElement.id === 'joystickForca';
+        }
+        
+        function atualizarJoystick(touch) {
+            const joystick = document.getElementById('joystick');
+            const rect = joystick.getBoundingClientRect();
+            const centerX = rect.left + rect.width / 2;
+            const centerY = rect.top + rect.height / 2;
+            
+            const deltaX = touch.clientX - centerX;
+            const deltaY = touch.clientY - centerY;
+            const distance = Math.min(rect.width / 3, Math.sqrt(deltaX * deltaX + deltaY * deltaY));
+            const angle = Math.atan2(deltaY, deltaX);
+            
+            const knobX = Math.cos(angle) * distance;
+            const knobY = Math.sin(angle) * distance;
+            
+            document.getElementById('joystickKnob').style.transform = 
+                `translate(calc(-50% + ${knobX}px), calc(-50% + ${knobY}px))`;
+            
+            joystickPos.x = knobX / (rect.width / 3);
+            joystickPos.y = knobY / (rect.width / 3);
+            
+            // Atualizar rotação da câmera
+            camera.rotation.y -= joystickPos.x * 0.05;
+            camera.rotation.x = Math.max(-0.5, Math.min(0.5, camera.rotation.x - joystickPos.y * 0.05));
+        }
+        
+        function iniciarCarregamentoForca() {
+            if (!bolaArremessada) {
+                carregandoForca = true;
+                forcaAtual = 0;
+                document.getElementById('barraForca').style.width = '0%';
+            }
+        }
+        
+        function onMouseMove(event) {
+            if (!bolaArremessada && !isMobile) {
+                const movX = (event.clientX - window.innerWidth/2) * 0.001;
+                const movY = (event.clientY - window.innerHeight/2) * 0.001;
+                
+                camera.rotation.y = -movX;
+                camera.rotation.x = Math.max(-0.5, Math.min(0.5, -movY));
+            }
+        }
+        
+        function arremessarBola() {
+            if (!bolaArremessada && carregandoForca) {
+                bolaArremessada = true;
+                carregandoForca = false;
+                
+                const forcaBase = 15;
+                const forcaTotal = forcaBase * (forcaAtual / 100);
+                
+                const direcao = new THREE.Vector3();
+                camera.getWorldDirection(direcao);
+                const velocidade = direcao.multiplyScalar(forcaTotal);
+                velocidade.y += 5;
+                
+                // Adicionar bola à lista de bolas arremessadas
+                const bolaInfo = {
+                    bola: bola,
+                    velocidade: velocidade,
+                    tempo: 0,
+                    pontuou: false,
+                    arremessoPerfeito: false // Indica que é um arremesso normal
+                };
+                
+                bolasArremessadas.push(bolaInfo);
+                
+                // Criar nova bola após arremesso
+                setTimeout(() => {
+                    criarBola();
+                }, 500);
+            }
+        }
+        
+        function resetarBola() {
+            bola.position.copy(posicaoInicial);
+            bola.position.y -= 0.3;
+            bola.position.x += 0.3;
+            velocidadeBola.set(0, 0, 0);
+            bolaArremessada = false;
+            forcaAtual = 0;
+            document.getElementById('barraForca').style.width = '0%';
+        }
+        
+        function atualizarPosicaoMao() {
+            if (!bolaArremessada) {
+                mao.position.copy(camera.position);
+                mao.position.y -= 0.3;
+                mao.position.x += 0.3;
+                mao.rotation.copy(camera.rotation);
+            }
+        }
+        
+        function atualizarLinhaMira() {
+            if (!bolaArremessada) {
+                const pontos = [];
+                const posicaoInicial = bola.position.clone();
+                const direcao = new THREE.Vector3();
+                camera.getWorldDirection(direcao);
+                
+                const velocidadeInicial = direcao.multiplyScalar(15 * (forcaAtual / 100));
+                velocidadeInicial.y += 5;
+                
+                const gravidade = 9.8;
+                const dt = 0.03;
+                let t = 0;
+                
+                for (let i = 0; i < 30; i++) {
+                    const x = posicaoInicial.x + velocidadeInicial.x * t;
+                    const y = posicaoInicial.y + velocidadeInicial.y * t - (0.5 * gravidade * t * t);
+                    const z = posicaoInicial.z + velocidadeInicial.z * t;
+                    
+                    if (y < 0) break;
+                    
+                    pontos.push(new THREE.Vector3(x, y, z));
+                    t += dt;
+                }
+                
+                linhaMira.geometry.setFromPoints(pontos);
+            } else {
+                linhaMira.geometry.setFromPoints([]);
+            }
+        }
+        
+        function atualizarLinhaGuia() {
+            // Remover apenas a linha guia antiga, não todo o chão
+            cena.children = cena.children.filter(child => 
+                child instanceof THREE.Mesh && 
+                child.geometry instanceof THREE.PlaneGeometry && 
+                child.material.transparent // Remove apenas objetos transparentes (linha guia)
+            );
+            
+            // Criar nova linha guia
+            const geometriaLinhaGuia = new THREE.PlaneGeometry(0.1, Math.abs(posicaoInicial.z + 5));
+            const materialLinhaGuia = new THREE.MeshBasicMaterial({ 
+                color: 0xffffff,
+                transparent: true,
+                opacity: 0.3
+            });
+            const linhaGuia = new THREE.Mesh(geometriaLinhaGuia, materialLinhaGuia);
+            linhaGuia.rotation.x = -Math.PI / 2;
+            linhaGuia.position.set(0, 0.01, (posicaoInicial.z - 5) / 2);
+            cena.add(linhaGuia);
+        }
+        
+        function atualizarFisica(deltaTime) {
+            if (carregandoForca) {
+                forcaAtual = (forcaAtual + 50 * deltaTime) % 100;
+                document.getElementById('barraForca').style.width = forcaAtual + '%';
+            }
+            
+            atualizarLinhaMira();
+            
+            // Atualizar todas as bolas arremessadas
+            for (let i = bolasArremessadas.length - 1; i >= 0; i--) {
+                const bolaInfo = bolasArremessadas[i];
+                const bola = bolaInfo.bola;
+                const velocidade = bolaInfo.velocidade;
+                
+                // Gravidade
+                velocidade.y -= 9.8 * deltaTime;
+                
+                // Posição da cesta para assistência
+                const posicaoCesta = new THREE.Vector3();
+                cesta.getWorldPosition(posicaoCesta);
+                posicaoCesta.y += 2.7; // Altura do aro
+                
+                // Verificar se a bola está próxima à cesta
+                const distanciaCesta = bola.position.distanceTo(posicaoCesta);
+                const direcaoCesta = posicaoCesta.clone().sub(bola.position).normalize();
+                
+                // Melhorar a assistência da bola
+                if (distanciaCesta < 1.2 && !bolaInfo.pontuou && 
+                    Math.abs(bola.position.y - posicaoCesta.y) < 0.5 &&
+                    velocidade.y < 0) {
+                    
+                    // Verificar se a bola está em trajetória de cesta
+                    const posicaoAro = new THREE.Vector3();
+                    cesta.children[3].getWorldPosition(posicaoAro);
+                    const direcaoAro = posicaoAro.clone().sub(bola.position).normalize();
+                    const anguloTrajetoria = velocidade.clone().normalize().dot(direcaoAro);
+                    
+                    // Só aplica assistência se a bola estiver em trajetória próxima ao aro
+                    if (anguloTrajetoria > 0.85) { // Aproximadamente 30 graus de tolerância
+                        const forcaAssistencia = 0.3 * (1 - distanciaCesta / 1.2);
+                        const velocidadeDesejada = direcaoCesta.multiplyScalar(velocidade.length() * 0.9);
+                        velocidade.lerp(velocidadeDesejada, forcaAssistencia);
+                    }
+                }
+                
+                // Atualizar posição
+                bola.position.add(velocidade.clone().multiplyScalar(deltaTime));
+                
+                // Rotação da bola
+                bola.rotation.x += velocidade.length() * deltaTime;
+                bola.rotation.z += velocidade.length() * deltaTime;
+                
+                // Colisão com o chão
+                if (bola.position.y < 0.12) {
+                    bola.position.y = 0.12;
+                    velocidade.y = -velocidade.y * 0.6;
+                    velocidade.x *= 0.8;
+                    velocidade.z *= 0.8;
+                }
+                
+                // Verificar colisão com o aro
+                const posicaoAro = new THREE.Vector3();
+                cesta.children[3].getWorldPosition(posicaoAro);
+                const distanciaAro = Math.sqrt(
+                    Math.pow(bola.position.x - posicaoAro.x, 2) +
+                    Math.pow(bola.position.z - posicaoAro.z, 2)
+                );
+                const distanciaVerticalAro = Math.abs(bola.position.y - posicaoAro.y);
+                
+                if (distanciaAro < 0.7 && distanciaVerticalAro < 0.3 && !bolaInfo.pontuou) {
+                    // Colisão com o aro (terceira lei de Newton)
+                    const direcaoImpacto = bola.position.clone().sub(posicaoAro).normalize();
+                    const velocidadeNormal = velocidade.clone().projectOnVector(direcaoImpacto);
+                    const velocidadeTangencial = velocidade.clone().sub(velocidadeNormal);
+                    
+                    // Verificar se a bola está próxima o suficiente do centro do aro
+                    const distanciaCentroAro = Math.abs(distanciaAro - 0.45);
+                    if (distanciaCentroAro < 0.1) { // Se estiver próxima da borda do aro
+                        // Calcular direção para o centro do aro
+                        const direcaoCentro = new THREE.Vector3(
+                            posicaoAro.x - bola.position.x,
+                            0,
+                            posicaoAro.z - bola.position.z
+                        ).normalize();
+                        
+                        // Aplicar uma força suave em direção ao centro
+                        const forcaInducao = 0.3 * (1 - distanciaCentroAro / 0.1);
+                        velocidade.lerp(direcaoCentro.multiplyScalar(velocidade.length()), forcaInducao);
+                        
+                        // Ajustar componente vertical para facilitar a entrada
+                        if (bola.position.y > posicaoAro.y) {
+                            velocidade.y *= 0.7; // Reduz velocidade vertical se estiver acima do aro
+                        }
+                    } else {
+                        // Reflexão normal com perda de energia
+                        velocidadeNormal.multiplyScalar(-0.5); // Coeficiente de restituição
+                        velocidadeTangencial.multiplyScalar(0.7); // Atrito
+                        velocidade.copy(velocidadeNormal.add(velocidadeTangencial));
+                        velocidade.y *= 0.8; // Redução adicional na vertical
+                    }
+                }
+                
+                // Verificar colisão com a tabela
+                const boundingBoxTabela = new THREE.Box3().setFromObject(cesta.children[1]); // Tabela é o segundo elemento
+                const boundingBoxBola = new THREE.Box3().setFromObject(bola);
+                
+                if (boundingBoxTabela.intersectsBox(boundingBoxBola)) {
+                    // Obter o ponto de colisão (centro da bola quando colide)
+                    const posicaoTabela = new THREE.Vector3();
+                    cesta.children[1].getWorldPosition(posicaoTabela);
+                    
+                    // Calcular a normal da superfície da tabela (aponta para frente)
+                    const normalTabela = new THREE.Vector3(0, 0, 1);
+                    
+                    // Decompor a velocidade em componentes normal e tangencial
+                    const velocidadeNormal = velocidade.clone().projectOnVector(normalTabela);
+                    const velocidadeTangencial = velocidade.clone().sub(velocidadeNormal);
+                    
+                    // Aplicar reflexão com perda de energia (terceira lei de Newton)
+                    const escala = cesta.scale.x;
+                    velocidadeNormal.multiplyScalar(-0.6 / escala); // Ajusta força do rebote baseado na escala
+                    velocidadeTangencial.multiplyScalar(0.8 / escala); // Ajusta atrito baseado na escala
+                    
+                    // Recombinar as velocidades
+                    velocidade.copy(velocidadeNormal.add(velocidadeTangencial));
+                    
+                    // Adicionar impulso aleatório proporcional à escala
+                    velocidade.x += (Math.random() - 0.5) * 0.5 / escala;
+                    velocidade.y += Math.random() * 0.5 / escala;
+                    
+                    // Garantir que a bola não fique presa na tabela
+                    bola.position.z = posicaoTabela.z + (0.2 * escala);
+                }
+                
+                // Verificar cesta
+                const alturaBola = bola.position.y;
+                const alturaAro = posicaoAro.y;
+                const escala = cesta.scale.x;
+                
+                if (distanciaAro < 0.3 * escala && // Dentro do aro, ajustado pela escala
+                    Math.abs(alturaBola - alturaAro) < 0.2 * escala && // Na altura certa
+                    velocidade.y < 0 && // Descendo
+                    !bolaInfo.pontuou) {
+                    
+                    // Verificar se a bola está realmente passando pelo centro do aro
+                    const posicaoAroCentro = posicaoAro.clone();
+                    const distanciaCentroAro = Math.sqrt(
+                        Math.pow(bola.position.x - posicaoAroCentro.x, 2) +
+                        Math.pow(bola.position.z - posicaoAroCentro.z, 2)
+                    );
+                    
+                    // Verificar se a bola está realmente caindo pelo aro
+                    const direcaoQueda = velocidade.clone().normalize();
+                    const anguloQueda = Math.abs(direcaoQueda.y);
+                    
+                    // Só pontua se a bola estiver realmente passando pelo centro do aro
+                    if (anguloQueda > 0.7 && distanciaCentroAro < 0.25 * escala) {
+                        // Marcar que a bola pontuou
+                        bolaInfo.pontuou = true;
+                        
+                        // Atualiza pontuação baseado no nível
+                        const pontosBase = nivel >= 3 ? 3 : 2;
+                        pontos += pontosBase;
+                        document.getElementById('pontuacao').textContent = `Pontos: ${pontos}`;
+                        
+                        // Incrementa contador de acertos
+                        acertosNoNivel++;
+                        
+                        // Verifica se atingiu 3 acertos para mudar de nível
+                        if (acertosNoNivel >= 3) {
+                            nivel = Math.min(6, nivel + 1);
+                            acertosNoNivel = 0; // Reseta contador para o próximo nível
+                            document.getElementById('nivel').textContent = `Nível: ${nivel}`;
+                            
+                            // Remover cesta e parede antigas
+                            cena.remove(cesta);
+                            cena.children = cena.children.filter(child => 
+                                !(child instanceof THREE.Mesh && child.geometry instanceof THREE.BoxGeometry)
+                            );
+                            
+                            // Criar nova cesta e quadra com novo tamanho
+                            criarCesta();
+                            criarQuadra();
+                        }
+                        
+                        // Mantém a física normal da bola após pontuar
+                        velocidade.y *= 0.95;
+                        velocidade.x *= 0.95;
+                        velocidade.z *= 0.95;
+                    }
+                }
+                
+                // Verificar colisão entre bolas
+                for (let j = i + 1; j < bolasArremessadas.length; j++) {
+                    const outraBola = bolasArremessadas[j];
+                    const distanciaBolas = bola.position.distanceTo(outraBola.bola.position);
+                    
+                    // Se as bolas colidirem (soma dos raios = 0.24)
+                    if (distanciaBolas < 0.24) {
+                        // Calcular direção da colisão
+                        const direcaoColisao = outraBola.bola.position.clone()
+                            .sub(bola.position)
+                            .normalize();
+                        
+                        // Calcular ângulo de impacto
+                        const anguloImpacto = Math.acos(direcaoColisao.y);
+                        
+                        // Decompor velocidades em componentes normal e tangencial
+                        const velocidadeNormal1 = velocidade.clone()
+                            .projectOnVector(direcaoColisao);
+                        const velocidadeTangencial1 = velocidade.clone()
+                            .sub(velocidadeNormal1);
+                        
+                        const velocidadeNormal2 = outraBola.velocidade.clone()
+                            .projectOnVector(direcaoColisao);
+                        const velocidadeTangencial2 = outraBola.velocidade.clone()
+                            .sub(velocidadeNormal2);
+                        
+                        // Calcular energia total do sistema
+                        const energiaTotal = velocidade.length() + outraBola.velocidade.length();
+                        
+                        // Troca de velocidades normais com variação dinâmica
+                        const tempVelNormal = velocidadeNormal1.clone();
+                        
+                        // Adicionar componente vertical baseado no ângulo de impacto
+                        const impulsoVertical = Math.sin(anguloImpacto) * energiaTotal * 0.3;
+                        
+                        // Aplicar velocidades com variação
+                        velocidadeNormal1.copy(velocidadeNormal2)
+                            .multiplyScalar(0.8)
+                            .add(new THREE.Vector3(
+                                (Math.random() - 0.5) * energiaTotal * 0.2,
+                                impulsoVertical + (Math.random() - 0.3) * energiaTotal * 0.2,
+                                (Math.random() - 0.5) * energiaTotal * 0.2
+                            ));
+                        
+                        velocidadeNormal2.copy(tempVelNormal)
+                            .multiplyScalar(0.8)
+                            .add(new THREE.Vector3(
+                                (Math.random() - 0.5) * energiaTotal * 0.2,
+                                impulsoVertical + (Math.random() - 0.3) * energiaTotal * 0.2,
+                                (Math.random() - 0.5) * energiaTotal * 0.2
+                            ));
+                        
+                        // Adicionar rotação aleatória às velocidades tangenciais
+                        const rotacaoAleatoria1 = new THREE.Euler(
+                            Math.random() * Math.PI * 2,
+                            Math.random() * Math.PI * 2,
+                            Math.random() * Math.PI * 2
+                        );
+                        const rotacaoAleatoria2 = new THREE.Euler(
+                            Math.random() * Math.PI * 2,
+                            Math.random() * Math.PI * 2,
+                            Math.random() * Math.PI * 2
+                        );
+                        
+                        velocidadeTangencial1.applyEuler(rotacaoAleatoria1).multiplyScalar(0.7);
+                        velocidadeTangencial2.applyEuler(rotacaoAleatoria2).multiplyScalar(0.7);
+                        
+                        // Recombinar velocidades
+                        velocidade.copy(velocidadeNormal1.add(velocidadeTangencial1));
+                        outraBola.velocidade.copy(velocidadeNormal2.add(velocidadeTangencial2));
+                        
+                        // Separar as bolas para evitar sobreposição
+                        const sobreposicao = 0.24 - distanciaBolas;
+                        const correcao = direcaoColisao.multiplyScalar(sobreposicao / 2);
+                        bola.position.sub(correcao);
+                        outraBola.bola.position.add(correcao);
+                        
+                        // Adicionar rotação às bolas
+                        bola.rotation.x += Math.random() * Math.PI;
+                        bola.rotation.z += Math.random() * Math.PI;
+                        outraBola.bola.rotation.x += Math.random() * Math.PI;
+                        outraBola.bola.rotation.z += Math.random() * Math.PI;
+                    }
+                }
+                
+                // Remover bola após 8 segundos
+                bolaInfo.tempo += deltaTime;
+                if (bolaInfo.tempo > 8) {
+                    cena.remove(bola);
+                    bolasArremessadas.splice(i, 1);
+                }
+            }
+            
+            if (!bolaArremessada) {
+                atualizarPosicaoMao();
+            }
+        }
+        
+        function onWindowResize() {
+            camera.aspect = window.innerWidth / window.innerHeight;
+            camera.updateProjectionMatrix();
+            renderizador.setSize(window.innerWidth, window.innerHeight);
+        }
+        
+        function animate(tempo) {
+            requestAnimationFrame(animate);
+            
+            const deltaTime = (tempo - ultimoTempo) / 1000;
+            ultimoTempo = tempo;
+            
+            if (deltaTime < 0.1) {
+                atualizarFisica(deltaTime);
+            }
+            
+            renderizador.render(cena, camera);
+        }
+        
+        function arremessarPerfeito() {
+            if (!bolaArremessada) {
+                bolaArremessada = true;
+                carregandoForca = false;
+
+                // Obter posição do aro
+                const posicaoAro = new THREE.Vector3();
+                cesta.children[3].getWorldPosition(posicaoAro);
+
+                // Ajustar o ponto alvo para ser exatamente no centro do aro
+                const pontoAlvo = posicaoAro.clone();
+                pontoAlvo.y += 0.05; // Ajuste mínimo para cima
+                pontoAlvo.z += 0.1; // Ajuste para garantir que a bola passe dentro do aro
+
+                // Calcular vetor direção para o ponto alvo
+                const direcao = pontoAlvo.clone().sub(bola.position);
+
+                // Calcular distância horizontal e vertical
+                const distanciaHorizontal = Math.sqrt(
+                    Math.pow(direcao.x, 2) + Math.pow(direcao.z, 2)
+                );
+                const distanciaVertical = pontoAlvo.y - bola.position.y;
+
+                // Ajustar tempo de voo baseado na distância
+                const tempo = Math.sqrt(distanciaHorizontal / 4);
+
+                // Calcular velocidade inicial necessária
+                const gravidade = 9.8;
+                const velocidadeHorizontal = distanciaHorizontal / tempo;
+                const velocidadeVertical = (distanciaVertical + (gravidade * tempo * tempo) / 2) / tempo;
+
+                // Normalizar direção horizontal
+                const direcaoHorizontal = new THREE.Vector3(direcao.x, 0, direcao.z).normalize();
+
+                // Criar vetor de velocidade
+                const velocidade = direcaoHorizontal.multiplyScalar(velocidadeHorizontal);
+                velocidade.y = velocidadeVertical;
+
+                // Adicionar bola à lista com flag de arremesso perfeito
+                const bolaInfo = {
+                    bola: bola,
+                    velocidade: velocidade,
+                    tempo: 0,
+                    pontuou: false,
+                    arremessoPerfeito: true
+                };
+
+                bolasArremessadas.push(bolaInfo);
+
+                // Criar nova bola após arremesso
+                setTimeout(() => {
+                    criarBola();
+                }, 500);
+            }
+        }
+        
+        init();
+        animate(0);
+    </script>
+</body>
+</html> 
