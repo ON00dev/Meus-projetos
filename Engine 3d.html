@@ -238,26 +238,131 @@
     };
 
     window.exportarCena = () => {
-      const objetosExportados = objetos.map(obj => ({
-        tipo: obj.geometry.type,
-        posicao: obj.position.toArray(),
-        rotacao: obj.rotation.toArray(),
-        escala: obj.scale.toArray(),
-        cor: '#' + obj.material.color.getHexString()
-      }));
+  const objetosExportados = objetos.map(obj => ({
+    tipo: obj.geometry.type,
+    posicao: obj.position.toArray(),
+    rotacao: obj.rotation.toArray(),
+    escala: obj.scale.toArray(),
+    cor: '#' + obj.material.color.getHexString()
+  }));
 
-      const dadosExportados = {
-        objetos: objetosExportados
-      };
+  const htmlContent = `<!DOCTYPE html>
+<html>
+<head>
+  <title>Ravygine Exported Scene</title>
+  <style>
+    body, html {
+      margin: 0;
+      overflow: hidden;
+      font-family: Arial, sans-serif;
+      background: #1a1a1a;
+      color: #fff;
+    }
+    
+    #canvas3d {
+      width: 100%;
+      height: 100vh;
+      display: block;
+    }
+  </style>
+</head>
+<body>
+  <canvas id="canvas3d"></canvas>
+</body>
+</html>`;
 
-      const blob = new Blob([JSON.stringify(dadosExportados, null, 2)], { type: 'application/json' });
-      const url = URL.createObjectURL(blob);
-      const a = document.createElement('a');
-      a.href = url;
-      a.download = 'cena3d.json';
-      a.click();
-      URL.revokeObjectURL(url);
-    };
+  const blob = new Blob([htmlContent], { type: 'text/html' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = 'cena.html';
+    
+  const scriptContent = `
+import * as THREE from 'https://cdn.skypack.dev/three@0.132.2';
+import { OrbitControls } from 'https://cdn.skypack.dev/three@0.132.2/examples/jsm/controls/OrbitControls.js';
+
+const cena = new THREE.Scene();
+cena.background = new THREE.Color(0x2a2a2a);
+
+const camera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 0.1, 1000);
+camera.position.set(3, 3, 5);
+
+const renderizador = new THREE.WebGLRenderer({
+  canvas: document.querySelector('#canvas3d'),
+  antialias: true
+});
+renderizador.setSize(window.innerWidth, window.innerHeight);
+
+const luzAmbiente = new THREE.AmbientLight(0xffffff, 0.5);
+cena.add(luzAmbiente);
+
+const luzDirecional = new THREE.DirectionalLight(0xffffff, 1);
+luzDirecional.position.set(5, 5, 5);
+cena.add(luzDirecional);
+
+const controles = new OrbitControls(camera, renderizador.domElement);
+
+const grade = new THREE.GridHelper(20, 20);
+cena.add(grade);
+
+const objetosImportados = ${JSON.stringify(objetosExportados)};
+
+objetosImportados.forEach(obj => {
+  let geometria, material, objeto;
+  switch (obj.tipo) {
+    case 'BoxGeometry':
+      geometria = new THREE.BoxGeometry();
+      break;
+    case 'SphereGeometry':
+      geometria = new THREE.SphereGeometry(0.5, 32, 32);
+      break;
+    case 'CylinderGeometry':
+      geometria = new THREE.CylinderGeometry(0.5, 0.5, 1, 32);
+      break;
+    default:
+      console.error('Tipo de geometria não reconhecido:', obj.tipo);
+      return;
+  }
+
+  material = new THREE.MeshPhongMaterial({ color: obj.cor });
+  objeto = new THREE.Mesh(geometria, material);
+  
+  objeto.position.fromArray(obj.posicao);
+  objeto.rotation.fromArray(obj.rotacao);
+  objeto.scale.fromArray(obj.escala);
+
+  cena.add(objeto);
+});
+
+function animar() {
+  requestAnimationFrame(animar);
+  controles.update();
+  renderizador.render(cena, camera);
+}
+
+animar();
+
+window.addEventListener('resize', () => {
+  camera.aspect = window.innerWidth / window.innerHeight;
+  camera.updateProjectionMatrix();
+  renderizador.setSize(window.innerWidth, window.innerHeight);
+});`;
+ 
+  const script = document.createElement('script');
+  script.type = 'module';
+  script.textContent = scriptContent;
+ 
+  const modifiedHtml = htmlContent.replace(
+    '</body>', 
+    `${script.outerHTML}</body>`
+  );
+  
+  const modifiedBlob = new Blob([modifiedHtml], { type: 'text/html' });
+  a.href = URL.createObjectURL(modifiedBlob);
+  
+  a.click();
+  URL.revokeObjectURL(url);
+};
 
     inicializar();
 
