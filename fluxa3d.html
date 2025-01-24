@@ -1,0 +1,210 @@
+<!DOCTYPE html>
+<html lang="pt">
+<head>
+    <meta charset="UTF-8">
+    <title>Título da página</title>
+</head>
+<body>
+    <canvas id="fluxaCanvas" width="1000" height="1000"></canvas>  
+    <script>
+     const flux3d = (function() {
+    function Cena(canvasId) {
+        const canvas = document.getElementById(canvasId);
+        const gl = canvas.getContext('webgl');
+        
+        if (!gl) {
+            console.error('WebGL não é suportado no seu navegador.');
+            return;
+        }
+        
+        this.gl = gl;
+        this.shaderProgram = this.criarShaderProgram();
+        this.objetos = [];
+    }
+
+    Cena.prototype.criarShaderProgram = function() {
+        const vertexShaderSource = `
+            attribute vec4 a_position;
+            uniform mat4 u_modelMatrix;
+            void main(void) {
+                gl_Position = u_modelMatrix * a_position;
+            }
+        `;
+        
+        const fragmentShaderSource = `
+            precision mediump float;
+            uniform vec4 u_color;
+            void main(void) {
+                gl_FragColor = u_color;
+            }
+        `;
+
+        const vertexShader = this.compilarShader(this.gl.VERTEX_SHADER, vertexShaderSource);
+        const fragmentShader = this.compilarShader(this.gl.FRAGMENT_SHADER, fragmentShaderSource);
+        const program = this.gl.createProgram();
+        this.gl.attachShader(program, vertexShader);
+        this.gl.attachShader(program, fragmentShader);
+        this.gl.linkProgram(program);
+
+        if (!this.gl.getProgramParameter(program, this.gl.LINK_STATUS)) {
+            console.error('Falha ao inicializar o shader program.');
+        }
+
+        return program;
+    };
+    Cena.prototype.compilarShader = function(type, source) {
+        const shader = this.gl.createShader(type);
+        this.gl.shaderSource(shader, source);
+        this.gl.compileShader(shader);
+        
+        if (!this.gl.getShaderParameter(shader, this.gl.COMPILE_STATUS)) {
+            console.error('Erro na compilação do shader:', this.gl.getShaderInfoLog(shader));
+        }
+
+        return shader;
+    };
+  
+    Cena.prototype.Cubo = function(id, cor) {
+        const vertices = new Float32Array([
+            -0.5, -0.5, -0.5,  
+             0.5, -0.5, -0.5,  
+             0.5,  0.5, -0.5,  
+            -0.5,  0.5, -0.5,  
+            -0.5, -0.5,  0.5,  
+             0.5, -0.5,  0.5,  
+             0.5,  0.5,  0.5, 
+            -0.5,  0.5,  0.5, 
+        ]);
+        const indices = new Uint16Array([
+            0, 1, 2, 0, 2, 3, 
+            4, 5, 6, 4, 6, 7, 
+            0, 1, 5, 0, 5, 4,  
+            2, 3, 7, 2, 7, 6, 
+            0, 3, 7, 0, 7, 4,
+            1, 2, 6, 1, 6, 5, 
+        ]);
+        const cubo = {
+            id: id,
+            cor: cor || [1.0, 1.0, 0.0, 1.0], 
+            vertices: vertices,
+            indices: indices,
+            rotacao: [0, 0, 0],
+            modelMatrix: this.matrizIdentidade(),
+        };
+        this.objetos.push(cubo);
+        return cubo;
+    };  
+    Cena.prototype.iniciarBuffers = function() {
+        this.objetos.forEach(object => {
+            object.vertexBuffer = this.gl.createBuffer();
+            this.gl.bindBuffer(this.gl.ARRAY_BUFFER, object.vertexBuffer);            this.gl.bufferData(this.gl.ARRAY_BUFFER, new Float32Array(object.vertices), this.gl.STATIC_DRAW);
+            object.indexBuffer = this.gl.createBuffer();
+            this.gl.bindBuffer(this.gl.ELEMENT_ARRAY_BUFFER, object.indexBuffer);            this.gl.bufferData(this.gl.ELEMENT_ARRAY_BUFFER, new Uint16Array(object.indices), this.gl.STATIC_DRAW);
+        });
+    };
+    
+    
+
+    Cena.prototype.rotacao = function(id, rotacao) {
+        const object = this.objetos.find(obj => obj.id === id);
+        if (!object) {
+            console.error('Objeto não encontrado: ', id);
+            return;        }
+        object.rotacao[0] += rotacao[0];
+        object.rotacao[1] += rotacao[1];
+        object.rotacao[2] += rotacao[2];
+
+        object.modelMatrix = this.matrizRotacao(object.rotacao);
+    };
+    
+  Cena.prototype.matrizIdentidade = function() {
+        return new Float32Array([
+            1, 0, 0, 0,
+            0, 1, 0, 0,
+            0, 0, 1, 0,
+            0, 0, 0, 1
+        ]);
+    };
+
+    Cena.prototype.matrizRotacao = function(rotacao) {
+        const x = rotacao[0];
+        const y = rotacao[1];
+        const z = rotacao[2];
+        const cosX = Math.cos(x), sinX = Math.sin(x);
+        const cosY = Math.cos(y), sinY = Math.sin(y);
+        const cosZ = Math.cos(z), sinZ = Math.sin(z);
+        const rotacaoX = new Float32Array([
+            1, 0, 0, 0,
+            0, cosX, -sinX, 0,
+            0, sinX, cosX, 0,
+            0, 0, 0, 1
+        ]);
+        const rotacaoY = new Float32Array([
+            cosY, 0, sinY, 0,
+            0, 1, 0, 0,
+            -sinY, 0, cosY, 0,
+            0, 0, 0, 1
+        ]);
+        const rotacaoZ = new Float32Array([
+            cosZ, -sinZ, 0, 0,
+            sinZ, cosZ, 0, 0,
+           0, 0, 1, 0,
+            0, 0, 0, 1
+        ]);
+
+        return this.multiplicarMatrizes(this.multiplicarMatrizes(rotacaoX, rotacaoY), rotacaoZ);
+    };
+       Cena.prototype.multiplicarMatrizes = function(a, b) {
+        const result = new Float32Array(16);
+        for (let i = 0; i < 4; i++) {
+            for (let j = 0; j < 4; j++) {
+                result[i * 4 + j] = 0;
+                for (let k = 0; k < 4; k++) {
+                    result[i * 4 + j] += a[i * 4 + k] * b[k * 4 + j];
+                }
+            }
+        }
+        return result;
+    };
+
+  Cena.prototype.animar = function() {
+        this.gl.clearColor(0.0, 0.0, 0.0, 1.0); 
+        this.gl.clear(this.gl.COLOR_BUFFER_BIT);
+
+        this.gl.useProgram(this.shaderProgram);
+
+        this.objetos.forEach(object => {
+            const positionAttribute = this.gl.getAttribLocation(this.shaderProgram, 'a_position');
+            this.gl.bindBuffer(this.gl.ARRAY_BUFFER, object.vertexBuffer);
+            this.gl.vertexAttribPointer(positionAttribute, 3, this.gl.FLOAT, false, 0, 0);
+            this.gl.enableVertexAttribArray(positionAttribute);
+
+            const colorUniform = this.gl.getUniformLocation(this.shaderProgram, 'u_color');
+            this.gl.uniform4fv(colorUniform, object.cor);
+
+            const modelMatrixUniform = this.gl.getUniformLocation(this.shaderProgram, 'u_modelMatrix');            this.gl.uniformMatrix4fv(modelMatrixUniform, false, object.modelMatrix);
+            this.gl.bindBuffer(this.gl.ELEMENT_ARRAY_BUFFER, object.indexBuffer);
+            this.gl.drawElements(this.gl.TRIANGLES, object.indices.length, this.gl.UNSIGNED_SHORT, 0);
+        });
+        requestAnimationFrame(() => this.animar());
+    };
+
+    return {
+        Cena: Cena
+    };
+})();
+
+const fluxa3D = new flux3d.Cena('fluxaCanvas');
+fluxa3D.Cubo('cubo1', [1.0, 0.0, 0.0, 1.0]); 
+fluxa3D.iniciarBuffers();
+fluxa3D.animar();
+
+setInterval(() => {
+    fluxa3D.rotacao('cubo1', [0.01, 0.01, 0.0]);  
+}, 16);
+
+
+
+    </script>
+</body>
+</html>
