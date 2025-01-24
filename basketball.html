@@ -88,6 +88,23 @@
             transform: translate(-50%, -50%);
             pointer-events: none;
         }
+        #botaoArremesso {
+            position: fixed;
+            left: 20px;
+            bottom: 20px;
+            width: 80px;
+            height: 80px;
+            background: rgba(255, 255, 255, 0.2);
+            border-radius: 50%;
+            display: none;
+            border: 2px solid white;
+            color: white;
+            font-family: Arial;
+            font-size: 14px;
+            text-align: center;
+            line-height: 80px;
+            user-select: none;
+        }
     </style>
 </head>
 <body>
@@ -97,6 +114,7 @@
     <div id="forcaArremesso"><div id="barraForca"></div></div>
     <div id="joystick"><div id="joystickKnob"></div></div>
     <div id="joystickForca"><div id="joystickForcaKnob"></div></div>
+    <div id="botaoArremesso">ARREMESSAR</div>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
     <script>
         let cena, camera, renderizador, bola, cesta, mao;
@@ -115,12 +133,13 @@
         let bolasArremessadas = [];
         let linhaMira;
         let pontosTrajetoria = [];
+        let texturaParede;
         
         // Configuração inicial
         function init() {
             // Cena
             cena = new THREE.Scene();
-            cena.background = new THREE.Color(0x87CEEB);
+            cena.background = new THREE.Color(0x0a1a2f); // Azul escuro noturno
             
             // Camera
             camera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 0.1, 1000);
@@ -142,6 +161,15 @@
             luzDirecional.castShadow = true;
             cena.add(luzDirecional);
             
+            // Carregar textura da parede
+            const carregadorTextura = new THREE.TextureLoader();
+            texturaParede = carregadorTextura.load('https://raw.githubusercontent.com/mrdoob/three.js/master/examples/textures/brick_diffuse.jpg', function(textura) {
+                textura.wrapS = THREE.RepeatWrapping;
+                textura.wrapT = THREE.RepeatWrapping;
+                textura.repeat.set(4, 2); // Ajusta o número de repetições da textura
+                criarQuadra(); // Recria a quadra quando a textura carregar
+            });
+            
             // Quadra
             criarQuadra();
             
@@ -156,9 +184,23 @@
             
             // Configurar controles baseados no dispositivo
             if (isMobile) {
-                document.getElementById('joystick').style.display = 'block';
-                document.getElementById('joystickForca').style.display = 'block';
-                document.getElementById('instrucoes').textContent = 'Toque e segure para arremessar | Use o joystick para mirar';
+                // Forçar orientação paisagem
+                screen.orientation.lock('landscape').catch(function(error) {
+                    console.log("Orientação paisagem não suportada");
+                });
+                
+                // Remover joysticks antigos
+                document.getElementById('joystick').style.display = 'none';
+                document.getElementById('joystickForca').style.display = 'none';
+                
+                // Adicionar botão de arremesso
+                const botaoArremesso = document.createElement('div');
+                botaoArremesso.id = 'botaoArremesso';
+                botaoArremesso.textContent = 'ARREMESSAR';
+                document.body.appendChild(botaoArremesso);
+                botaoArremesso.style.display = 'block';
+                
+                document.getElementById('instrucoes').textContent = 'Deslize para mirar | Pressione o botão para arremessar';
                 configurarControlesMobile();
             } else {
                 document.getElementById('forcaArremesso').style.display = 'block';
@@ -190,6 +232,9 @@
             });
             
             window.addEventListener('resize', onWindowResize);
+            
+            // Adicionar estrelas
+            adicionarEstrelas();
         }
         
         function criarQuadra() {
@@ -242,8 +287,11 @@
             // Parede de fundo
             const geometriaParede = new THREE.BoxGeometry(20, 10, 0.5);
             const materialParede = new THREE.MeshStandardMaterial({ 
-                color: 0x666666,
-                roughness: 0.7
+                map: texturaParede,
+                roughness: 0.7,
+                metalness: 0.1,
+                bumpMap: texturaParede,
+                bumpScale: 0.02
             });
             const parede = new THREE.Mesh(geometriaParede, materialParede);
             const escalaParede = Math.max(0.4, 1 - ((nivel - 1) * 0.1));
@@ -251,6 +299,62 @@
             parede.position.set(0, 5 * escalaParede, -8 * escalaParede);
             parede.receiveShadow = true;
             cena.add(parede);
+            
+            // Adicionar refletores
+            function adicionarRefletor(x, y, z) {
+                // Suporte do refletor
+                const geometriaSuporte = new THREE.CylinderGeometry(0.1, 0.1, 0.3, 8);
+                const materialSuporte = new THREE.MeshStandardMaterial({ 
+                    color: 0x333333,
+                    metalness: 0.8,
+                    roughness: 0.2
+                });
+                const suporte = new THREE.Mesh(geometriaSuporte, materialSuporte);
+                suporte.rotation.x = Math.PI / 2;
+                suporte.position.set(x, y, z);
+
+                // Corpo do refletor
+                const geometriaRefletor = new THREE.ConeGeometry(0.3, 0.4, 16);
+                const materialRefletor = new THREE.MeshStandardMaterial({ 
+                    color: 0xffffff,
+                    metalness: 0.5,
+                    roughness: 0.2
+                });
+                const refletor = new THREE.Mesh(geometriaRefletor, materialRefletor);
+                refletor.rotation.x = -Math.PI / 3;
+                refletor.position.y = -0.1;
+                suporte.add(refletor);
+
+                // Luz do refletor
+                const luz = new THREE.SpotLight(0xffffff, 0.5);
+                luz.position.copy(suporte.position);
+                luz.target.position.set(x, 0, z + 2);
+                luz.angle = Math.PI / 6;
+                luz.penumbra = 0.3;
+                luz.decay = 1.5;
+                luz.distance = 15;
+                luz.castShadow = true;
+                luz.shadow.mapSize.width = 1024;
+                luz.shadow.mapSize.height = 1024;
+                luz.shadow.camera.near = 0.1;
+                luz.shadow.camera.far = 20;
+                luz.shadow.focus = 1;
+
+                cena.add(luz.target);
+                cena.add(luz);
+                cena.add(suporte);
+            }
+
+            // Adicionar vários refletores na parede
+            const posicaoRefletores = [
+                {x: -4, y: 7, z: -7.8},
+                {x: 0, y: 7, z: -7.8},
+                {x: 4, y: 7, z: -7.8}
+            ];
+
+            posicaoRefletores.forEach(pos => {
+                adicionarRefletor(pos.x, pos.y, pos.z);
+            });
             
             cena.add(linhas);
         }
@@ -263,8 +367,12 @@
             grupoCesta.scale.set(escala, escala, escala);
             
             // Suporte traseiro
-            const geometriaSuporteVertical = new THREE.BoxGeometry(0.3, 4, 0.3);
-            const materialSuporte = new THREE.MeshStandardMaterial({ color: 0x444444 });
+            const geometriaSuporteVertical = new THREE.CylinderGeometry(0.15, 0.15, 4, 16);
+            const materialSuporte = new THREE.MeshStandardMaterial({ 
+                color: 0x888888,
+                metalness: 0.8,
+                roughness: 0.3
+            });
             const suporteVertical = new THREE.Mesh(geometriaSuporteVertical, materialSuporte);
             suporteVertical.position.set(0, 2, -0.4);
             grupoCesta.add(suporteVertical);
@@ -274,23 +382,29 @@
             const materialTabela = new THREE.MeshStandardMaterial({ color: 0xffffff });
             const tabela = new THREE.Mesh(geometriaTabela, materialTabela);
             tabela.position.y = 3;
+            tabela.castShadow = true;
+            tabela.receiveShadow = true;
             grupoCesta.add(tabela);
             
             // Contorno laranja na tabela
-            const geometriaContornoExterno = new THREE.BoxGeometry(0.7, 0.6, 0.11);
+            const geometriaContornoExterno = new THREE.BoxGeometry(2.7, 1.5, 0.11);
             const materialContorno = new THREE.MeshStandardMaterial({ color: 0xff8c00 });
             const contornoExterno = new THREE.Mesh(geometriaContornoExterno, materialContorno);
-            contornoExterno.position.set(0, 2.7, 0.05);
+            contornoExterno.position.set(0, 3.0, 0.02);
+            contornoExterno.castShadow = true;
+            contornoExterno.receiveShadow = true;
             
-            const geometriaContornoInterno = new THREE.BoxGeometry(0.5, 0.4, 0.12);
+            const geometriaContornoInterno = new THREE.BoxGeometry(2.5, 1.3, 0.22);
             const contornoInterno = new THREE.Mesh(geometriaContornoInterno, materialTabela);
             contornoInterno.position.set(0, 0, 0);
+            contornoInterno.castShadow = true;
+            contornoInterno.receiveShadow = true;
             contornoExterno.add(contornoInterno);
             
             grupoCesta.add(contornoExterno);
             
             // Aro
-            const geometriaAro = new THREE.TorusGeometry(0.45, 0.04, 16, 32);
+            const geometriaAro = new THREE.TorusGeometry(0.45, 0.03, 16, 32);
             const materialAro = new THREE.MeshStandardMaterial({ color: 0xff4444 });
             const aro = new THREE.Mesh(geometriaAro, materialAro);
             aro.rotation.x = Math.PI / 2;
@@ -300,9 +414,9 @@
             
             // Rede (mais densa)
             const materialRede = new THREE.MeshStandardMaterial({ 
-                color: 0xffffff,
+                color: 0xdddddd,
                 transparent: true,
-                opacity: 0.5
+                opacity: 0.7
             });
             
             // Fios verticais
@@ -335,8 +449,8 @@
             // Textura da bola
             const geometriaBola = new THREE.SphereGeometry(0.12, 32, 32);
             const materialBola = new THREE.MeshStandardMaterial({ 
-                color: 0xf4a460,
-                roughness: 0.8,
+                color: 0xff6600, // Laranja mais vivo
+                roughness: 0.6,
                 metalness: 0.1
             });
             
@@ -397,125 +511,53 @@
         }
         
         function configurarControlesMobile() {
-            const joystick = document.getElementById('joystick');
-            const joystickKnob = document.getElementById('joystickKnob');
-            const joystickForca = document.getElementById('joystickForca');
-            const joystickForcaKnob = document.getElementById('joystickForcaKnob');
-            
-            // Mostrar ambos os joysticks
-            joystick.style.display = 'block';
-            joystickForca.style.display = 'block';
-            
-            // Joystick de mira
-            joystick.addEventListener('touchstart', (e) => {
-                e.preventDefault();
-                joystickAtivo = true;
-                atualizarJoystick(e.touches[0]);
-            });
-            
-            joystick.addEventListener('touchmove', (e) => {
-                e.preventDefault();
-                if (joystickAtivo) {
-                    atualizarJoystick(e.touches[0]);
-                }
-            });
-            
-            joystick.addEventListener('touchend', () => {
-                joystickAtivo = false;
-                joystickPos = { x: 0, y: 0 };
-                joystickKnob.style.transform = 'translate(-50%, -50%)';
-            });
-            
-            // Joystick de força
-            let forcaAtiva = false;
-            
-            joystickForca.addEventListener('touchstart', (e) => {
-                e.preventDefault();
-                forcaAtiva = true;
-                carregandoForca = true;
-                forcaAtual = 0;
-            });
-            
-            joystickForca.addEventListener('touchmove', (e) => {
-                e.preventDefault();
-                if (forcaAtiva && !bolaArremessada) {
-                    const rect = joystickForca.getBoundingClientRect();
-                    const centerY = rect.top + rect.height / 2;
-                    const deltaY = centerY - e.touches[0].clientY;
-                    const maxDist = rect.height / 2;
-                    
-                    forcaAtual = Math.min(100, Math.max(0, (deltaY / maxDist) * 100));
-                    joystickForcaKnob.style.transform = 
-                        `translate(-50%, calc(-50% - ${(forcaAtual / 100) * maxDist}px))`;
-                }
-            });
-            
-            joystickForca.addEventListener('touchend', () => {
-                if (forcaAtiva && !bolaArremessada) {
-                    forcaAtiva = false;
-                    carregandoForca = false;
-                    joystickForcaKnob.style.transform = 'translate(-50%, -50%)';
-                    arremessarBola();
-                }
-            });
-            
-            // Deslizar para rotacionar a câmera
             let touchStartX = 0;
             let touchStartY = 0;
+            let areaControle = window.innerWidth / 2; // Metade direita da tela para controle
             
+            // Controle de mira (lado direito da tela)
             document.addEventListener('touchstart', (e) => {
-                if (e.touches.length === 1 && 
-                    !elementoEhJoystick(e.touches[0].target)) {
-                    touchStartX = e.touches[0].clientX;
-                    touchStartY = e.touches[0].clientY;
+                const touch = e.touches[0];
+                if (touch.clientX > areaControle) {
+                    touchStartX = touch.clientX;
+                    touchStartY = touch.clientY;
                 }
             });
             
             document.addEventListener('touchmove', (e) => {
-                if (e.touches.length === 1 && 
-                    !elementoEhJoystick(e.touches[0].target)) {
-                    const deltaX = e.touches[0].clientX - touchStartX;
-                    const deltaY = e.touches[0].clientY - touchStartY;
+                const touch = e.touches[0];
+                if (touch.clientX > areaControle) {
+                    const deltaX = touch.clientX - touchStartX;
+                    const deltaY = touch.clientY - touchStartY;
                     
                     camera.rotation.y -= deltaX * 0.01;
                     camera.rotation.x = Math.max(-0.5, Math.min(0.5, camera.rotation.x - deltaY * 0.01));
                     
-                    touchStartX = e.touches[0].clientX;
-                    touchStartY = e.touches[0].clientY;
+                    touchStartX = touch.clientX;
+                    touchStartY = touch.clientY;
                 }
             });
-        }
-        
-        function elementoEhJoystick(elemento) {
-            return elemento.id === 'joystick' || 
-                   elemento.id === 'joystickForca' ||
-                   elemento.parentElement.id === 'joystick' ||
-                   elemento.parentElement.id === 'joystickForca';
-        }
-        
-        function atualizarJoystick(touch) {
-            const joystick = document.getElementById('joystick');
-            const rect = joystick.getBoundingClientRect();
-            const centerX = rect.left + rect.width / 2;
-            const centerY = rect.top + rect.height / 2;
             
-            const deltaX = touch.clientX - centerX;
-            const deltaY = touch.clientY - centerY;
-            const distance = Math.min(rect.width / 3, Math.sqrt(deltaX * deltaX + deltaY * deltaY));
-            const angle = Math.atan2(deltaY, deltaX);
+            // Controle de arremesso (botão)
+            const botaoArremesso = document.getElementById('botaoArremesso');
+            let carregandoArremesso = false;
             
-            const knobX = Math.cos(angle) * distance;
-            const knobY = Math.sin(angle) * distance;
+            botaoArremesso.addEventListener('touchstart', (e) => {
+                e.preventDefault();
+                if (!bolaArremessada) {
+                    carregandoArremesso = true;
+                    carregandoForca = true;
+                    forcaAtual = 0;
+                }
+            });
             
-            document.getElementById('joystickKnob').style.transform = 
-                `translate(calc(-50% + ${knobX}px), calc(-50% + ${knobY}px))`;
-            
-            joystickPos.x = knobX / (rect.width / 3);
-            joystickPos.y = knobY / (rect.width / 3);
-            
-            // Atualizar rotação da câmera
-            camera.rotation.y -= joystickPos.x * 0.05;
-            camera.rotation.x = Math.max(-0.5, Math.min(0.5, camera.rotation.x - joystickPos.y * 0.05));
+            botaoArremesso.addEventListener('touchend', () => {
+                if (carregandoArremesso) {
+                    carregandoArremesso = false;
+                    carregandoForca = false;
+                    arremessarBola();
+                }
+            });
         }
         
         function iniciarCarregamentoForca() {
@@ -653,7 +695,7 @@
                 const velocidade = bolaInfo.velocidade;
                 
                 // Gravidade
-                velocidade.y -= 9.8 * deltaTime;
+                velocidade.y -= 9.9 * deltaTime;
                 
                 // Posição da cesta para assistência
                 const posicaoCesta = new THREE.Vector3();
@@ -915,9 +957,9 @@
                     }
                 }
                 
-                // Remover bola após 8 segundos
+                // Remover bola após 10 segundos
                 bolaInfo.tempo += deltaTime;
-                if (bolaInfo.tempo > 8) {
+                if (bolaInfo.tempo > 10) {
                     cena.remove(bola);
                     bolasArremessadas.splice(i, 1);
                 }
@@ -1001,6 +1043,29 @@
                     criarBola();
                 }, 500);
             }
+        }
+        
+        function adicionarEstrelas() {
+            const geometria = new THREE.BufferGeometry();
+            const vertices = [];
+            
+            for (let i = 0; i < 1000; i++) {
+                const x = Math.random() * 1000 - 500;
+                const y = Math.random() * 300 + 50;
+                const z = Math.random() * 1000 - 500;
+                vertices.push(x, y, z);
+            }
+            
+            geometria.setAttribute('position', new THREE.Float32BufferAttribute(vertices, 3));
+            const material = new THREE.PointsMaterial({
+                color: 0xffffff,
+                size: 0.5,
+                transparent: true,
+                opacity: 0.8
+            });
+            
+            const estrelas = new THREE.Points(geometria, material);
+            cena.add(estrelas);
         }
         
         init();
