@@ -957,6 +957,33 @@
                     }
                 }
                 
+                // Verificar colisão com a parede
+                const posicaoParede = new THREE.Vector3(0, 5, -8);
+                const escalaParede = Math.max(0.4, 1 - ((nivel - 1) * 0.1));
+                const larguraParede = 20 * escalaParede;
+                const alturaParede = 10 * escalaParede;
+
+                // Verificar se a bola está próxima à parede
+                const distanciaParede = Math.abs(bola.position.z - (posicaoParede.z * escalaParede));
+                const dentroLargura = Math.abs(bola.position.x) < larguraParede / 2;
+                const dentroAltura = bola.position.y < alturaParede;
+
+                if (distanciaParede < 0.3 && dentroLargura && dentroAltura) {
+                    // Aplicar terceira lei de Newton (ação e reação)
+                    velocidade.z = -velocidade.z * 0.8; // Inverte a direção Z com perda de energia
+                    
+                    // Adicionar variação na direção do rebote
+                    velocidade.x += (Math.random() - 0.5) * 2;
+                    velocidade.y += Math.random() * 2;
+                    
+                    // Garantir que a bola não fique presa na parede
+                    bola.position.z = (posicaoParede.z * escalaParede) + 0.3;
+                    
+                    // Adicionar rotação à bola após o impacto
+                    bola.rotation.x += Math.random() * Math.PI;
+                    bola.rotation.z += Math.random() * Math.PI;
+                }
+                
                 // Remover bola após 10 segundos
                 bolaInfo.tempo += deltaTime;
                 if (bolaInfo.tempo > 10) {
